@@ -172,28 +172,43 @@ with kpi_col4:
         unsafe_allow_html=True
     )
 
-# ---- KPI Trend (Line Chart) and Top 10 Products Side by Side ----
-col_left, col_right = st.columns(2)
+# ---- KPI Selection (Affects Both Charts) ----
+st.subheader("Visualize KPI Across Time & Top Products")
 
-with col_left:
-    st.subheader("KPI Trend Over Time")
+if df.empty:
+    st.warning("No data available for the selected filters and date range.")
+else:
+    # Radio button above both charts
+    kpi_options = ["Sales", "Quantity", "Profit", "Margin Rate"]
+    selected_kpi = st.radio("Select KPI to display:", options=kpi_options, horizontal=True)
 
-    if df.empty:
-        st.warning("No data available for the selected filters and date range.")
-    else:
-        # Radio button for KPI selection
-        kpi_options = ["Sales", "Quantity", "Profit", "Margin Rate"]
-        selected_kpi = st.radio("Select KPI to display:", options=kpi_options, horizontal=True)
+    # ---- Prepare Data for Charts ----
+    # Daily grouping for line chart
+    daily_grouped = df.groupby("Order Date").agg({
+        "Sales": "sum",
+        "Quantity": "sum",
+        "Profit": "sum"
+    }).reset_index()
+    # Avoid division by zero
+    daily_grouped["Margin Rate"] = daily_grouped["Profit"] / daily_grouped["Sales"].replace(0, 1)
 
-        # Prepare daily data
-        daily_grouped = df.groupby("Order Date").agg({
-            "Sales": "sum",
-            "Quantity": "sum",
-            "Profit": "sum"
-        }).reset_index()
-        daily_grouped["Margin Rate"] = daily_grouped["Profit"] / daily_grouped["Sales"].replace(0, 1)
+    # Product grouping for top 10 chart
+    product_grouped = df.groupby("Product Name").agg({
+        "Sales": "sum",
+        "Quantity": "sum",
+        "Profit": "sum"
+    }).reset_index()
+    product_grouped["Margin Rate"] = product_grouped["Profit"] / product_grouped["Sales"].replace(0, 1)
 
-        # Plotly line chart
+    # Sort for top 10 by selected KPI
+    product_grouped.sort_values(by=selected_kpi, ascending=False, inplace=True)
+    top_10 = product_grouped.head(10)
+
+    # ---- Side-by-Side Layout for Charts ----
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        # Line Chart
         fig_line = px.line(
             daily_grouped,
             x="Order Date",
@@ -205,27 +220,16 @@ with col_left:
         fig_line.update_layout(height=400)
         st.plotly_chart(fig_line, use_container_width=True)
 
-with col_right:
-    st.subheader("Top 10 Products by Sales")
-
-    if df.empty:
-        st.warning("No data to display for Top 10 items.")
-    else:
-        product_sales = (
-            df.groupby("Product Name")["Sales"]
-            .sum()
-            .reset_index()
-            .sort_values("Sales", ascending=False)
-            .head(10)
-        )
+    with col_right:
+        # Horizontal Bar Chart
         fig_bar = px.bar(
-            product_sales,
-            x="Sales",
+            top_10,
+            x=selected_kpi,
             y="Product Name",
             orientation="h",
-            title="Top 10 Products by Sales",
-            labels={"Sales": "Sales", "Product Name": "Product"},
-            color="Sales",
+            title=f"Top 10 Products by {selected_kpi}",
+            labels={selected_kpi: selected_kpi, "Product Name": "Product"},
+            color=selected_kpi,
             color_continuous_scale="Blues",
             template="plotly_white",
         )
