@@ -3,133 +3,204 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 
-# Set page configuration for wide layout
+# Set page config for wide layout
 st.set_page_config(page_title="SuperStore KPI Dashboard", layout="wide")
 
-# 1. Load the Data
+# ---- Load Data ----
 @st.cache_data
 def load_data():
-    # Adjust the path if needed (e.g., "data/Sample - Superstore.xlsx")
+    # Adjust the path if needed, e.g. "data/Sample - Superstore.xlsx"
     df = pd.read_excel("Sample - Superstore.xlsx", engine="openpyxl")
-    # Ensure Order Date is datetime
+    # Convert Order Date to datetime if not already
     if not pd.api.types.is_datetime64_any_dtype(df["Order Date"]):
         df["Order Date"] = pd.to_datetime(df["Order Date"])
     return df
 
-df = load_data()
+df_original = load_data()
 
-st.title("SuperStore KPI Dashboard")
+# ---- Sidebar Filters ----
+st.sidebar.title("Filters")
 
-# ------------------------------------------------------------------------------
-# 2. Cascading Filters
-# ------------------------------------------------------------------------------
 # Region Filter
-regions = sorted(df["Region"].dropna().unique().tolist())
-selected_region = st.selectbox("Select Region:", options=["All"] + regions)
-if selected_region != "All":
-    df = df[df["Region"] == selected_region]
+all_regions = sorted(df_original["Region"].dropna().unique())
+selected_region = st.sidebar.selectbox("Select Region", options=["All"] + all_regions)
 
-# State Filter (depends on Region selection)
-states = sorted(df["State"].dropna().unique().tolist())
-selected_state = st.selectbox("Select State:", options=["All"] + states)
-if selected_state != "All":
-    df = df[df["State"] == selected_state]
+# State Filter (cascades from Region)
+if selected_region != "All":
+    df_filtered_region = df_original[df_original["Region"] == selected_region]
+else:
+    df_filtered_region = df_original
+all_states = sorted(df_filtered_region["State"].dropna().unique())
+selected_state = st.sidebar.selectbox("Select State", options=["All"] + all_states)
 
 # Category Filter
-categories = sorted(df["Category"].dropna().unique().tolist())
-selected_category = st.selectbox("Select Category:", options=["All"] + categories)
-if selected_category != "All":
-    df = df[df["Category"] == selected_category]
+if selected_state != "All":
+    df_filtered_state = df_filtered_region[df_filtered_region["State"] == selected_state]
+else:
+    df_filtered_state = df_filtered_region
+all_categories = sorted(df_filtered_state["Category"].dropna().unique())
+selected_category = st.sidebar.selectbox("Select Category", options=["All"] + all_categories)
 
 # Sub-Category Filter
-subcats = sorted(df["Sub-Category"].dropna().unique().tolist())
-selected_subcat = st.selectbox("Select Sub-Category:", options=["All"] + subcats)
+if selected_category != "All":
+    df_filtered_category = df_filtered_state[df_filtered_state["Category"] == selected_category]
+else:
+    df_filtered_category = df_filtered_state
+all_subcats = sorted(df_filtered_category["Sub-Category"].dropna().unique())
+selected_subcat = st.sidebar.selectbox("Select Sub-Category", options=["All"] + all_subcats)
+
+# Filter the DataFrame by all selected filters
+df = df_filtered_category.copy()
 if selected_subcat != "All":
     df = df[df["Sub-Category"] == selected_subcat]
 
-# ------------------------------------------------------------------------------
-# 3. KPI Tiles
-# ------------------------------------------------------------------------------
-# Calculate metrics
-total_sales = df["Sales"].sum()
-total_quantity = df["Quantity"].sum()
-total_profit = df["Profit"].sum()
-margin_rate = total_profit / total_sales if total_sales != 0 else 0
-
-# Display KPIs in a row
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("Sales", f"${total_sales:,.2f}")
-kpi2.metric("Quantity Sold", f"{total_quantity:,.0f}")
-kpi3.metric("Profit", f"${total_profit:,.2f}")
-kpi4.metric("Margin Rate", f"{margin_rate*100:,.2f}%")
-
-# ------------------------------------------------------------------------------
-# 4. Line Chart with Time Range + KPI Selection
-# ------------------------------------------------------------------------------
-# Date Range Slider (min to max Order Date in the filtered df)
-if not df.empty:
+# ---- Sidebar Date Range (From and To) ----
+if df.empty:
+    # If there's no data after above filters, set safe defaults
+    min_date = df_original["Order Date"].min()
+    max_date = df_original["Order Date"].max()
+else:
     min_date = df["Order Date"].min()
     max_date = df["Order Date"].max()
-else:
-    # Fallback in case there's no data after filtering
-    min_date = datetime(2020, 1, 1)
-    max_date = datetime(2020, 12, 31)
 
-date_range = st.slider(
-    "Select Date Range:",
-    min_value=min_date,
-    max_value=max_date,
-    value=(min_date, max_date),
-    format="YYYY-MM-DD"
+from_date = st.sidebar.date_input("From Date", value=min_date, min_value=min_date, max_value=max_date)
+to_date = st.sidebar.date_input("To Date", value=max_date, min_value=min_date, max_value=max_date)
+
+# Ensure from_date <= to_date
+if from_date > to_date:
+    st.sidebar.error("From Date must be earlier than To Date.")
+
+# Apply date range filter
+df = df[(df["Order Date"] >= pd.to_datetime(from_date)) & (df["Order Date"] <= pd.to_datetime(to_date))]
+
+# ---- Page Title ----
+st.title("SuperStore KPI Dashboard")
+
+# ---- Custom CSS for KPI Tiles ----
+st.markdown(
+    """
+    <style>
+    .kpi-box {
+        background-color: #FFFFFF;
+        border: 2px solid #EAEAEA;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 8px;
+        text-align: center;
+    }
+    .kpi-title {
+        font-weight: 600;
+        color: #333333;
+        font-size: 16px;
+        margin-bottom: 8px;
+    }
+    .kpi-value {
+        font-weight: 700;
+        font-size: 24px;
+        color: #1E90FF;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
-# Filter the dataframe by the selected date range
-df_time_filtered = df[(df["Order Date"] >= date_range[0]) & (df["Order Date"] <= date_range[1])]
+# ---- KPI Calculation ----
+if df.empty:
+    total_sales = 0
+    total_quantity = 0
+    total_profit = 0
+    margin_rate = 0
+else:
+    total_sales = df["Sales"].sum()
+    total_quantity = df["Quantity"].sum()
+    total_profit = df["Profit"].sum()
+    margin_rate = (total_profit / total_sales) if total_sales != 0 else 0
 
-# Let the user pick which KPI to plot
-kpi_options = ["Sales", "Quantity", "Profit", "Margin Rate"]
-selected_kpi = st.radio("Select KPI to display:", options=kpi_options, horizontal=True)
+# ---- KPI Display (Rectangles) ----
+kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
+with kpi_col1:
+    st.markdown(
+        f"""
+        <div class='kpi-box'>
+            <div class='kpi-title'>Sales</div>
+            <div class='kpi-value'>${total_sales:,.2f}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+with kpi_col2:
+    st.markdown(
+        f"""
+        <div class='kpi-box'>
+            <div class='kpi-title'>Quantity Sold</div>
+            <div class='kpi-value'>{total_quantity:,.0f}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+with kpi_col3:
+    st.markdown(
+        f"""
+        <div class='kpi-box'>
+            <div class='kpi-title'>Profit</div>
+            <div class='kpi-value'>${total_profit:,.2f}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+with kpi_col4:
+    st.markdown(
+        f"""
+        <div class='kpi-box'>
+            <div class='kpi-title'>Margin Rate</div>
+            <div class='kpi-value'>{(margin_rate * 100):,.2f}%</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-# Prepare data for line chart
-# We'll group by Order Date. For Margin Rate, we do sum(profit)/sum(sales) for each date.
-if not df_time_filtered.empty:
-    daily_grouped = df_time_filtered.groupby("Order Date").agg({
+# ---- Line Chart with KPI Selection ----
+st.subheader("KPI Trend Over Time")
+
+if df.empty:
+    st.warning("No data available for the selected filters and date range.")
+else:
+    # Let the user pick which KPI to plot
+    kpi_options = ["Sales", "Quantity", "Profit", "Margin Rate"]
+    selected_kpi = st.radio("Select KPI to display:", options=kpi_options, horizontal=True)
+
+    # Prepare daily data
+    daily_grouped = df.groupby("Order Date").agg({
         "Sales": "sum",
         "Quantity": "sum",
         "Profit": "sum"
     }).reset_index()
-    daily_grouped["Margin Rate"] = daily_grouped["Profit"] / daily_grouped["Sales"]
-else:
-    daily_grouped = pd.DataFrame(columns=["Order Date", "Sales", "Quantity", "Profit", "Margin Rate"])
+    daily_grouped["Margin Rate"] = daily_grouped["Profit"] / daily_grouped["Sales"].replace(0, 1)
 
-# Plotly line chart
-if not daily_grouped.empty:
+    # Plotly line chart
     fig_line = px.line(
         daily_grouped,
         x="Order Date",
         y=selected_kpi,
         title=f"{selected_kpi} Over Time",
-        labels={"Order Date": "Date", selected_kpi: selected_kpi}
+        labels={"Order Date": "Date", selected_kpi: selected_kpi},
+        template="plotly_white",
     )
     fig_line.update_layout(height=400)
     st.plotly_chart(fig_line, use_container_width=True)
-else:
-    st.warning("No data available for the selected filters and date range.")
 
-# ------------------------------------------------------------------------------
-# 5. Horizontal Bar Chart for Top 10 Items by Sales
-# ------------------------------------------------------------------------------
-# We'll use df_time_filtered so it respects all filters + date range
-if not df_time_filtered.empty:
-    # Group by Product Name, sum sales, sort descending
+# ---- Horizontal Bar Chart: Top 10 Products by Sales ----
+st.subheader("Top 10 Products by Sales")
+if df.empty:
+    st.warning("No data to display.")
+else:
     product_sales = (
-        df_time_filtered.groupby("Product Name")["Sales"]
+        df.groupby("Product Name")["Sales"]
         .sum()
         .reset_index()
-        .sort_values(by="Sales", ascending=False)
+        .sort_values("Sales", ascending=False)
         .head(10)
     )
-
     fig_bar = px.bar(
         product_sales,
         x="Sales",
@@ -138,9 +209,11 @@ if not df_time_filtered.empty:
         title="Top 10 Products by Sales",
         labels={"Sales": "Sales", "Product Name": "Product"},
         color="Sales",
-        color_continuous_scale="Blues"
+        color_continuous_scale="Blues",
+        template="plotly_white",
     )
-    fig_bar.update_layout(height=400, yaxis={"categoryorder": "total ascending"})
+    fig_bar.update_layout(
+        height=500,
+        yaxis={"categoryorder": "total ascending"}
+    )
     st.plotly_chart(fig_bar, use_container_width=True)
-else:
-    st.warning("No data to display for Top 10 items.")
